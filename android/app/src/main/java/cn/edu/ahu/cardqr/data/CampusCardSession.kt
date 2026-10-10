@@ -36,12 +36,15 @@ data class CardQr(
  *
  * Step 3 only has to happen once: the `JSESSIONID` is stored by the caller and the code can
  * then be fetched without any further interaction, which is what makes "open and scan"
- * possible. Captchas are deliberately solved by the human user, not by this client.
+ * possible.
+ *
+ * Steps 2 and 3 are what [AutoLogin] drives: it solves the captcha on-device so a session that
+ * lapsed can be re-established without the user ever seeing the login form.
  */
 class CampusCardSession(
     private val http: HttpClient = HttpClient(),
     baseUrl: String = DEFAULT_BASE,
-) {
+) : LoginApi {
 
     private val base = baseUrl.trimEnd('/')
     private var cookie: String? = null
@@ -91,7 +94,7 @@ class CampusCardSession(
     // -------------------------------------------------------------- 1. session
 
     /** Create the anonymous session that the captcha and login calls both need. */
-    fun openSession() {
+    override fun openSession() {
         val r = http.request("POST", "$base/user/session", null, headers(), false)
         absorbCookies(r)
     }
@@ -99,7 +102,7 @@ class CampusCardSession(
     // -------------------------------------------------------------- 2. captcha
 
     /** Fetch a fresh 4-character captcha image (JPEG bytes). */
-    fun fetchCaptcha(): ByteArray {
+    override fun fetchCaptcha(): ByteArray {
         if (cookie.isNullOrEmpty()) openSession()
         val r = http.getBytes(
             "$base/remind/authcode",
@@ -114,8 +117,13 @@ class CampusCardSession(
 
     // ---------------------------------------------------------------- 3. login
 
-    /** Bind [username]/[password] to the current session. [captcha] is read by the user. */
-    fun login(username: String, password: String, captcha: String) {
+    /**
+     * Bind [username]/[password] to the current session.
+     *
+     * [captcha] is normally read by [AutoLogin] from the local model; it is only typed by the
+     * user when recognition is unavailable or keeps being rejected.
+     */
+    override fun login(username: String, password: String, captcha: String) {
         if (cookie.isNullOrEmpty()) openSession()
         val form = "username=" + enc(username) + "&pwd=" + enc(password) +
             "&flag=0&imgcode=" + enc(captcha)

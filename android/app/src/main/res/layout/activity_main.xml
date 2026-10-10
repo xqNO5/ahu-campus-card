@@ -53,11 +53,13 @@
                 android:inputType="textPassword" />
 
             <LinearLayout
+                android:id="@+id/captchaRow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:visibility="gone">
 
                 <EditText
                     android:id="@+id/captchaInput"
@@ -79,20 +81,30 @@
             </LinearLayout>
 
             <TextView
+                android:id="@+id/captchaHint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="@string/login_captcha_hint"
+                android:text="@string/login_captcha_auto"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
             <CheckBox
-                android:id="@+id/remember"
+                android:id="@+id/autoCaptcha"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:checked="true"
-                android:text="@string/login_remember"
+                android:text="@string/login_auto_captcha"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <CheckBox
+                android:id="@+id/rememberPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="@string/login_remember_password"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
 

@@ -1,6 +1,7 @@
 name: Build APK
 
-# Builds the debug APK and runs the JVM unit tests that pin the crypto and QR ports.
+# Builds the debug APK and runs the JVM unit tests that pin the QR port, the captcha model's
+# numeric parity and the auto-login retry policy.
 # The APK is uploaded as an artifact, so no local Android SDK/Studio is needed:
 # download it from the run summary and sideload it.
 
@@ -45,11 +46,30 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Unit tests (crypto + QR encoder)
+      - name: Check Android resource references
+        # Catches dangling @string / R.id references in seconds instead of several minutes
+        # into the resource-linking step.
+        run: python3 ../tools/check_android_resources.py .
+
+      - name: Unit tests (crypto + QR encoder + captcha model)
         run: gradle testDebugUnitTest --no-daemon --stacktrace
 
       - name: Assemble debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Verify the captcha model ships inside the APK
+        # The .bin and the Kotlin runtime are two ends of a private contract, and "the file is
+        # in the repo" does not prove "the file is in the APK". This is the cheap check that
+        # the asset is really packaged (the numeric parity test lives in the unit tests).
+        run: |
+          set -euo pipefail
+          model=app/src/main/assets/captcha_compact.bin
+          apk=$(ls app/build/outputs/apk/debug/*.apk | head -n1)
+          echo "APK: $apk ($(stat -c%s "$apk") bytes)"
+          echo "model: $model ($(stat -c%s "$model") bytes)"
+          sha256sum "$model"
+          unzip -l "$apk" | grep -E 'assets/captcha_compact\.bin' \
+            || { echo "::error::captcha_compact.bin is missing from the APK"; exit 1; }
 
       - name: Report test results
         if: always()

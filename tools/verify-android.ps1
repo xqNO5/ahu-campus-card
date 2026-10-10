@@ -12,6 +12,17 @@ $android = Join-Path $repo 'android'
 $tools = Join-Path $repo '.tools'
 $build = Join-Path $android '.verify-build'
 
+# Resource references first: a dangling @string/R.id is the cheapest way to break the CI
+# build, and it needs neither an Android SDK nor Kotlin to detect.
+Write-Host '[0/3] checking Android resource references'
+$python = if ($env:AHU_PYTHON) { $env:AHU_PYTHON } else { 'python' }
+if (Get-Command $python -ErrorAction SilentlyContinue) {
+    & $python (Join-Path $PSScriptRoot 'check_android_resources.py') $android
+    if ($LASTEXITCODE -ne 0) { throw 'resource references do not resolve' }
+} else {
+    Write-Host "python not found; skipping the resource check (set AHU_PYTHON to enable it)"
+}
+
 # Pin JDK 17 (what the Android Gradle build in CI uses) so class-file versions match
 # between javac, kotlinc and java. Override with AHU_JDK_HOME if needed.
 $jdkHome = $env:AHU_JDK_HOME
@@ -48,39 +59,43 @@ $stdlib = Join-Path $tools 'kotlin-stdlib.jar'
 if (Test-Path $build) { Remove-Item -Recurse -Force $build }
 New-Item -ItemType Directory -Force -Path $build | Out-Null
 
+# Android / org.json stubs. BitmapFactory really decodes (ImageIO) and Log prints to stdout,
+# so the captcha path (decode -> scale -> getPixels -> model) is exercised, not just compiled.
+$stubFiles = @(
+    'verify-stubs\android\graphics\Color.java',
+    'verify-stubs\android\graphics\Bitmap.java',
+    'verify-stubs\android\graphics\BitmapFactory.java',
+    'verify-stubs\android\util\Log.java',
+    'verify-stubs\android\content\Context.java',
+    'verify-stubs\android\content\res\AssetManager.java',
+    'verify-stubs\org\json\Json.java',
+    'verify-stubs\org\json\JSONObject.java',
+    'verify-stubs\org\json\JSONArray.java'
+) | ForEach-Object { Join-Path $android $_ }
+
 Write-Host '[1/3] compiling Java stubs (javac)'
 # javac cannot compile Kotlin and kotlinc cannot resolve a nested type out of class files,
 # so the stubs are compiled here for the runtime and also handed to kotlinc as sources.
-& $javac -d $build `
-    (Join-Path $android 'verify-stubs\android\graphics\Color.java') `
-    (Join-Path $android 'verify-stubs\android\graphics\Bitmap.java') `
-    (Join-Path $android 'verify-stubs\org\json\Json.java') `
-    (Join-Path $android 'verify-stubs\org\json\JSONObject.java') `
-    (Join-Path $android 'verify-stubs\org\json\JSONArray.java')
+& $javac -d $build @stubFiles
 if ($LASTEXITCODE -ne 0) { throw 'javac failed' }
 if (-not (Test-Path (Join-Path $build 'org\json\JSONObject.class'))) {
     throw "stubs did not compile into $build"
 }
 
 Write-Host '[2/3] compiling Kotlin sources (kotlinc)'
-$javaStubs = @(
-    'verify-stubs\android\graphics\Color.java',
-    'verify-stubs\android\graphics\Bitmap.java',
-    'verify-stubs\org\json\Json.java',
-    'verify-stubs\org\json\JSONObject.java',
-    'verify-stubs\org\json\JSONArray.java'
-) | ForEach-Object { Join-Path $android $_ }
-
 $sources = @(
     'app\src\main\java\cn\edu\ahu\cardqr\net\HttpClient.kt',
     'app\src\main\java\cn\edu\ahu\cardqr\data\CampusCardSession.kt',
+    'app\src\main\java\cn\edu\ahu\cardqr\data\AutoLogin.kt',
+    'app\src\main\java\cn\edu\ahu\cardqr\captcha\CompactCaptchaModel.kt',
+    'app\src\main\java\cn\edu\ahu\cardqr\captcha\CaptchaRecognizer.kt',
     'app\src\main\java\cn\edu\ahu\cardqr\qr\QrEncoder.kt',
     'app\src\main\java\cn\edu\ahu\cardqr\qr\QrRenderer.kt',
     'verify-harness\VerifyMain.kt'
 ) | ForEach-Object { Join-Path $android $_ }
 
 & $java -cp $compilerCp org.jetbrains.kotlin.cli.jvm.K2JVMCompiler `
-    -d $build -no-reflect -nowarn -classpath "$stdlib;$build" @javaStubs @sources 2>&1 |
+    -d $build -no-reflect -nowarn -classpath "$stdlib;$build" @stubFiles @sources 2>&1 |
     Where-Object { $_ -notmatch 'kotlin home directory' }
 if ($LASTEXITCODE -ne 0) { throw 'kotlinc failed' }
 
@@ -91,7 +106,8 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $out) | Out-Null
 $harnessExit = $LASTEXITCODE
 
 Write-Host ''
-Get-Content $out | Select-String -Pattern '^(CHECK FAIL|CHECK WARN|SUMMARY|NOTE)' | ForEach-Object { $_.Line }
+Get-Content $out | Select-String -Pattern '^(CHECK FAIL|CHECK WARN|SUMMARY|NOTE|ANDROID-LOG)' |
+    ForEach-Object { $_.Line }
 
 $failures = @(Select-String -Path $out -Pattern '^CHECK FAIL' -ErrorAction SilentlyContinue).Count
 $summary = @(Select-String -Path $out -Pattern '^SUMMARY OK' -ErrorAction SilentlyContinue).Count

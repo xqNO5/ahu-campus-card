@@ -3,14 +3,18 @@
     <string name="app_name">安大校园卡</string>
 
     <string name="login_title">安大校园卡二维码</string>
-    <string name="login_subtitle">只需登录一次。之后每次打开直接显示可用二维码，无需再输验证码。</string>
+    <string name="login_subtitle">只需登录一次。之后打开即显示可用二维码，验证码由本机自动识别。</string>
     <string name="login_username">学号 / 工号</string>
     <string name="login_password">密码</string>
     <string name="login_captcha">验证码</string>
     <string name="login_captcha_hint">看不清？点验证码图片换一张</string>
-    <string name="login_remember">记住账号（验证码仍需每次输入）</string>
+    <string name="login_captcha_auto">验证码由本机自动识别，无需输入</string>
+    <string name="login_captcha_needed">请输入 4 位验证码</string>
+    <string name="login_auto_captcha">自动识别验证码</string>
+    <string name="login_remember_password">记住密码（加密保存，会话过期后自动重登）</string>
     <string name="login_button">登录</string>
     <string name="login_loading">正在登录…</string>
+    <string name="login_auto_signing_in">正在自动登录…</string>
 
     <string name="card_title">校园卡付款码</string>
     <string name="card_balance">余额</string>
@@ -21,7 +25,11 @@
 
     <string name="error_network">网络连接失败，请检查网络后重试</string>
     <string name="error_credentials">学号或密码错误</string>
-    <string name="error_captcha">验证码错误：%1$s</string>
+    <string name="error_captcha">验证码错误，请重试</string>
+    <string name="error_captcha_model_unavailable">本机验证码识别不可用，请手动输入验证码</string>
+    <string name="error_captcha_auto_failed">自动识别验证码失败，请手动输入</string>
+    <string name="error_captcha_rejected">识别出的验证码被服务端拒绝，请手动输入</string>
+    <string name="error_auto_login_failed">自动登录失败：%1$s</string>
     <string name="error_session_expired">登录状态已失效，请重新登录</string>
     <string name="error_generic">操作失败：%1$s</string>
 </resources>

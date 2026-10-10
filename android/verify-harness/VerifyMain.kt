@@ -1,7 +1,14 @@
 package cn.edu.ahu.cardqr.verify
 
+import android.content.Context
+import cn.edu.ahu.cardqr.captcha.CaptchaRecognizer
+import cn.edu.ahu.cardqr.captcha.CompactCaptchaModel
+import cn.edu.ahu.cardqr.data.AutoLogin
+import cn.edu.ahu.cardqr.data.CampusCardException
 import cn.edu.ahu.cardqr.data.CampusCardSession
 import cn.edu.ahu.cardqr.data.CardQr
+import cn.edu.ahu.cardqr.data.LoginApi
+import cn.edu.ahu.cardqr.data.LoginOutcome
 import cn.edu.ahu.cardqr.qr.QrEncoder
 import cn.edu.ahu.cardqr.qr.QrRenderer
 import java.io.File
@@ -10,7 +17,12 @@ import java.io.File
  * Offline verification harness for the Android sources.
  *
  * `all` runs the checks that back the JUnit suite (QR matrices against frozen fixtures,
- * payload-shape parsing) so the encoder can be validated without an Android device.
+ * payload-shape parsing, the captcha model's cross-language fixture, the auto-login retry
+ * policy) so they can be validated without an Android device *and* without Gradle.
+ *
+ * `captcha [image]` pushes one captcha image -- by default the last one the live service
+ * handed out, saved under reports/ -- through the same decode -> scale -> model path the app
+ * uses, and prints what the model read. Use it to eyeball the model against a fresh image.
  *
  * `direct` exercises the real service the way the app does: a one-time captcha login followed
  * by login-free code fetches. It only needs a captcha once -- the session cookie is cached
@@ -28,6 +40,7 @@ object VerifyMain {
         when (val mode = if (args.isNotEmpty()) args[0] else "all") {
             "qr" -> { qr(); assertions() }
             "assert" -> assertions()
+            "captcha" -> captcha(if (args.size > 1) args[1] else null)
             "direct" -> direct()
             "all" -> { qr(); assertions() }
             else -> println("unknown mode: $mode")
@@ -48,6 +61,44 @@ object VerifyMain {
     private fun info(label: String, ok: Boolean, detail: String = "") {
         println("CHECK ${if (ok) "OK " else "WARN"} $label${if (detail.isEmpty()) "" else " :: $detail"}")
     }
+
+    /** Finds a file by relative path, whether the harness runs from the repo root or android/. */
+    private fun locate(vararg relatives: String): File? {
+        val roots = generateSequence(File("").absoluteFile) { it.parentFile }.toList()
+        for (relative in relatives) {
+            for (root in roots) {
+                val candidate = File(root, relative)
+                if (candidate.isFile) return candidate
+            }
+        }
+        return null
+    }
+
+    private fun locateDir(vararg relatives: String): File? {
+        val roots = generateSequence(File("").absoluteFile) { it.parentFile }.toList()
+        for (relative in relatives) {
+            for (root in roots) {
+                val candidate = File(root, relative)
+                if (candidate.isDirectory) return candidate
+            }
+        }
+        return null
+    }
+
+    private val modelAsset get() = locate(
+        "app/src/main/assets/captcha_compact.bin",
+        "android/app/src/main/assets/captcha_compact.bin",
+    )
+
+    private val assetDir get() = locateDir(
+        "app/src/main/assets",
+        "android/app/src/main/assets",
+    )
+
+    private val captchaFixture get() = locate(
+        "android/reports/captcha_live.jpg",
+        "reports/captcha_live.jpg",
+    )
 
     // -------------------------------------------------------------------- QR
 
@@ -141,6 +192,136 @@ object VerifyMain {
         val parsed = CardQr(real, "2026-10-10 23:40:30")
         check("CardQr splits numeric code", parsed.numericCode.length == 20, parsed.numericCode)
         check("CardQr reports token length", parsed.tokenLength == real.length - 20, "${parsed.tokenLength}")
+
+        captchaChecks()
+        loginPolicyChecks()
+    }
+
+    // ----------------------------------------------------------- captcha model
+
+    /**
+     * Mirrors CompactCaptchaModelTest plus one thing JUnit cannot do here: pushing a *real*
+     * captcha image the service actually handed out through the Android wrapper.
+     */
+    private fun captchaChecks() {
+        val asset = modelAsset
+        check(
+            "captcha model asset present",
+            asset != null,
+            "expected app/src/main/assets/captcha_compact.bin",
+        )
+        if (asset == null) return
+        println("NOTE captcha model size=${asset.length()} bytes")
+
+        val model = asset.inputStream().use(CompactCaptchaModel::load)
+
+        // Deterministic pseudo-random pixels: the same formula produces the same string on any
+        // machine, which is what pins the Kotlin runtime to the Python export.
+        val pseudo = IntArray(CompactCaptchaModel.IMAGE_WIDTH * CompactCaptchaModel.IMAGE_HEIGHT) { index ->
+            val x = index % CompactCaptchaModel.IMAGE_WIDTH
+            val y = index / CompactCaptchaModel.IMAGE_WIDTH
+            val red = (x * 17 + y * 3) and 0xff
+            val green = (x * 5 + y * 11) and 0xff
+            val blue = (x * 13 + y * 7) and 0xff
+            (0xff shl 24) or (red shl 16) or (green shl 8) or blue
+        }
+        val parity = model.recognize(pseudo)
+        check("captcha model parity fixture (BQWW)", parity == "BQWW", "got $parity")
+
+        val dir = assetDir
+        check("captcha assets dir located", dir != null)
+        if (dir == null) return
+
+        // The wrapper must degrade to null, never throw, when the asset is missing.
+        val broken = CaptchaRecognizer(Context(File(dir, "does-not-exist")))
+        check("recognizer reports unavailable for a missing model", !broken.isAvailable)
+        check("recognizer returns null without a model", broken.recognize(byteArrayOf(1, 2, 3)) == null)
+
+        val recognizer = CaptchaRecognizer(Context(dir))
+        check("recognizer loads the shipped model", recognizer.isAvailable)
+
+        val fixture = captchaFixture
+        if (fixture == null) {
+            info("captcha fixture image", false, "no reports/captcha_live.jpg; run 'direct' to capture one")
+            return
+        }
+        val text = recognizer.recognize(fixture.readBytes())
+        println("NOTE captcha fixture ${fixture.name} recognized as $text (local fixture from reports/)")
+        check("real captcha image decodes to four characters", text?.length == 4, "got $text")
+        check("recognizer never returns an empty string", !text.isNullOrEmpty())
+        check("recognizer ignores a non-image payload", recognizer.recognize(ByteArray(4096)) == null)
+    }
+
+    // ------------------------------------------------------------ login policy
+
+    /**
+     * Mirrors AutoLoginTest. The real thing is in `app/src/test`; this copy exists so the
+     * policy can be exercised by `tools/verify-android.ps1`, which does not run Gradle.
+     */
+    private fun loginPolicyChecks() {
+        val sleeps = mutableListOf<Long>()
+        var guess = "AAAA"
+        var accepted = "AAAA"
+        val api = object : LoginApi {
+            val guesses = mutableListOf<String>()
+            var fetches = 0
+            override fun openSession() = Unit
+            override fun fetchCaptcha(): ByteArray = byteArrayOf((fetches++).toByte())
+            override fun login(username: String, password: String, captcha: String) {
+                guesses += captcha
+                if (captcha != accepted) {
+                    throw CampusCardException("图形验证码错误", CampusCardException.Kind.CAPTCHA)
+                }
+            }
+        }
+        val flow = AutoLogin(api, { guess }, sleep = { sleeps += it })
+
+        check("auto-login succeeds on the first guess", flow.login("u", "p") is LoginOutcome.Success)
+        check("auto-login used one request", api.fetches == 1)
+        check("auto-login did not sleep on the first attempt", sleeps.isEmpty())
+
+        // Every guess rejected -> bounded attempts, then a manual fallback with a fresh image.
+        accepted = "NONE"
+        sleeps.clear()
+        val before = api.guesses.size
+        val outcome = flow.login("u", "p")
+        val fallback = outcome as? LoginOutcome.ManualCaptchaRequired
+        check("auto-login falls back to manual entry", fallback != null)
+        check(
+            "fallback reason is REJECTED",
+            fallback?.reason == LoginOutcome.ManualCaptchaRequired.Reason.REJECTED,
+            "${fallback?.reason}",
+        )
+        check(
+            "retries are bounded to ${AutoLogin.DEFAULT_MAX_ATTEMPTS}",
+            api.guesses.size - before == AutoLogin.DEFAULT_MAX_ATTEMPTS,
+            "attempted ${api.guesses.size - before}",
+        )
+        check("fallback carries a fresh captcha image", (fallback?.captchaImage?.size ?: 0) > 0)
+        check(
+            "retries are paced at ${AutoLogin.DEFAULT_MIN_INTERVAL_MS}ms",
+            sleeps.size == AutoLogin.DEFAULT_MAX_ATTEMPTS - 1,
+            "sleeps=$sleeps",
+        )
+
+        // No model at all: straight to manual, without a single login attempt.
+        val noModelApi = object : LoginApi {
+            var guesses = 0
+            override fun openSession() = Unit
+            override fun fetchCaptcha(): ByteArray = byteArrayOf(9)
+            override fun login(username: String, password: String, captcha: String) {
+                guesses++
+            }
+        }
+        val unavailable = AutoLogin(noModelApi, null).login("u", "p")
+        check(
+            "no model goes straight to manual entry",
+            (unavailable as? LoginOutcome.ManualCaptchaRequired)?.reason ==
+                LoginOutcome.ManualCaptchaRequired.Reason.MODEL_UNAVAILABLE,
+        )
+        check("no model never posts a login", noModelApi.guesses == 0)
+
+        check("log summary carries no captcha text", !AutoLogin.redactForLog(outcome).contains("AAAA"))
     }
 
     /**
@@ -148,13 +329,12 @@ object VerifyMain {
      * generated Kotlin source on its compile classpath.
      */
     private fun loadQrFixtures(): List<Triple<String, Int, List<String>>> {
-        val relative = "app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt"
-        val roots = generateSequence(File("").absoluteFile) { it.parentFile }.toList()
-        val candidates = roots.map { File(it, relative) } +
-            roots.map { File(File(it, "android"), relative) }
-        val file = candidates.firstOrNull { it.isFile }
+        val file = locate(
+            "app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt",
+            "android/app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt",
+        )
         if (file == null) {
-            println("NOTE QrFixtures.kt not found; looked in ${candidates.size} locations under ${File("").absolutePath}")
+            println("NOTE QrFixtures.kt not found under ${File("").absolutePath}")
             return emptyList()
         }
         val text = file.readText()
@@ -170,6 +350,28 @@ object VerifyMain {
             if (rows.isNotEmpty()) out.add(Triple(ecc, version, rows))
         }
         return out
+    }
+
+    // ---------------------------------------------------------------- captcha
+
+    /** Read one captcha image with the shipped model, for eyeballing against the picture. */
+    private fun captcha(path: String?) {
+        val dir = assetDir
+        if (dir == null || modelAsset == null) {
+            check("captcha assets located", false, "expected app/src/main/assets/captcha_compact.bin")
+            return
+        }
+        val recognizer = CaptchaRecognizer(Context(dir))
+        check("captcha model loaded", recognizer.isAvailable)
+
+        val file = path?.let { File(it) } ?: captchaFixture
+        if (file == null || !file.isFile) {
+            check("captcha image found", false, "pass a path: captcha <image>")
+            return
+        }
+        val text = recognizer.recognize(file.readBytes())
+        println("CAPTCHA ${file.name} -> $text")
+        check("recognized four characters", text?.length == 4, "got $text")
     }
 
     // ---------------------------------------------------------------- direct
@@ -217,6 +419,12 @@ object VerifyMain {
                 cookieFile.writeText(session.currentCookie() ?: "")
                 println("NOTE captcha saved to ${captchaFile.absolutePath} (${bytes.size} bytes)")
                 println("NOTE now run: direct -Dahu.captcha=<the 4 characters>")
+                // Show what the shipped model makes of the image we just saved.
+                val dir = assetDir
+                if (dir != null) {
+                    val read = CaptchaRecognizer(Context(dir)).recognize(bytes)
+                    println("NOTE local model reads that captcha as: $read")
+                }
             } catch (e: Exception) {
                 check("direct captcha fetch", false, "${e.javaClass.simpleName}: ${e.message}")
             }
