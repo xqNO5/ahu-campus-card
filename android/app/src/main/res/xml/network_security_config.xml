@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The AHU WebVPN serves parts of its tunnelled content over plain HTTP (paths appear as
+  /http-80/<hash>/... on the VPN host itself), so cleartext must stay enabled for that
+  host.  Everything else keeps the platform default (cleartext denied).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">wvpn.ahu.edu.cn</domain>
+        <domain includeSubdomains="true">ahu.edu.cn</domain>
+    </domain-config>
+</network-security-config>

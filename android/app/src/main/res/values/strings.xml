@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">安大校园卡</string>
+
+    <string name="login_title">安大校园卡二维码</string>
+    <string name="login_subtitle">使用统一身份认证登录后即可显示校园卡付款码</string>
+    <string name="login_username">学号 / 工号</string>
+    <string name="login_password">密码</string>
+    <string name="login_remember">记住账号（使用系统密钥库加密保存）</string>
+    <string name="login_button">登录</string>
+    <string name="login_loading">正在登录…</string>
+
+    <string name="card_title">校园卡付款码</string>
+    <string name="card_balance">余额</string>
+    <string name="card_account">卡号</string>
+    <string name="card_refresh">刷新</string>
+    <string name="card_logout">退出登录</string>
+    <string name="card_expires_in">二维码剩余有效时间</string>
+    <string name="card_loading">正在获取二维码…</string>
+    <string name="card_empty">没有查询到校园卡</string>
+
+    <string name="error_network">网络连接失败，请检查网络后重试</string>
+    <string name="error_credentials">学号或密码错误</string>
+    <string name="error_generic">操作失败：%1$s</string>
+</resources>

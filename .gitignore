@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.pylibs/
+
+# Local toolchain (Kotlin compiler jars downloaded by tools/verify-android.ps1)
+.tools/
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/.verify-build/
+android/local.properties
+android/.kotlin/
+.gradle/
+*.apk
+*.aab
+*.keystore
+keystore.properties
+
+# Browser profile used by the CDP helper
+.chrome-profile/
+
+# Reverse-engineering scratch output (never commit captured portal content)
+bundles/
+reports/
+debug_*.html
+decode_out.json
+chrome_err.txt
+chrome_out.txt
+login.html
+login.js
+des.js
+pyproject.toml
+des_core.js
+
+# Editor / OS
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+.DS_Store
+

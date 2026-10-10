@@ -1,0 +1,67 @@
+name: Build APK
+
+# Builds the debug APK and runs the JVM unit tests that pin the crypto and QR ports.
+# The APK is uploaded as an artifact, so no local Android SDK/Studio is needed:
+# download it from the run summary and sideload it.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Unit tests (crypto + QR encoder)
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Assemble debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Report test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: android/app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ahu-campus-card-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
