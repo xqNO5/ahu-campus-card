@@ -178,7 +178,7 @@ return ManualCaptchaRequired(freshCaptcha())   // 统一收敛到人工输入
 APK**（`unzip -l` 找 `assets/captcha_compact.bin`，并打印模型 SHA-256）并作为 artifact 上传。
 
 **取 APK**：打开 [Actions 页面](https://github.com/xqNO5/ahu-campus-card/actions) → 最新成功的
-**Build APK** → 底部 **Artifacts** → 下载 `ahu-campus-card-debug-apk`（约 1.3 MB，
+**Build APK** → 底部 **Artifacts** → 下载 `ahu-campus-card-debug-apk`（实测 1,196,719 字节，
 其中 357 KiB 是验证码模型本体）。
 
 ### 使用方式

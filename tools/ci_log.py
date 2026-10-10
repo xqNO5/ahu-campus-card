@@ -1,29 +1,25 @@
 """Fetch the failing job's log and print the interesting parts."""
 from __future__ import annotations
 
-import os
 import re
 import sys
 from pathlib import Path
 
 import requests
 
-token = Path(os.environ["TEMP"], "gh_token.txt").read_text().strip()
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept": "application/vnd.github+json",
-}
-REPO = "xqNO5/ahu-campus-card"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gh_api import REPO, headers  # noqa: E402
 
 
 def main() -> int:
+    auth = headers()
     run_id = sys.argv[1] if len(sys.argv) > 1 else None
     if not run_id:
-        r = requests.get(f"https://api.github.com/repos/{REPO}/actions/runs", headers=headers, timeout=30)
+        r = requests.get(f"https://api.github.com/repos/{REPO}/actions/runs", headers=auth, timeout=30)
         run_id = r.json()["workflow_runs"][0]["id"]
     print("run_id:", run_id)
 
-    jr = requests.get(f"https://api.github.com/repos/{REPO}/actions/runs/{run_id}/jobs", headers=headers, timeout=30)
+    jr = requests.get(f"https://api.github.com/repos/{REPO}/actions/runs/{run_id}/jobs", headers=auth, timeout=30)
     jobs = jr.json().get("jobs", [])
     if not jobs:
         print("no jobs")
@@ -33,7 +29,7 @@ def main() -> int:
 
     lr = requests.get(
         f"https://api.github.com/repos/{REPO}/actions/jobs/{job_id}/logs",
-        headers=headers,
+        headers=auth,
         timeout=60,
         allow_redirects=True,
     )
