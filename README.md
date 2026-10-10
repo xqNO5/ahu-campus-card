@@ -153,11 +153,19 @@ tools/                          逆向与验证脚本
 
 ## 5. 构建 APK（无需 Android Studio）
 
+仓库：**https://github.com/xqNO5/ahu-campus-card**
+
 推送到 GitHub 后，Actions 里的 **Build APK** 工作流会：
 
 1. 跑 JVM 单元测试（DES 向量、host hash、二维码矩阵）；
 2. 构建 debug APK；
-3. 把 `app-debug.apk` 作为 artifact 上传 —— 在运行页面直接下载并侧载即可。
+3. 把 `app-debug.apk` 作为 artifact 上传。
+
+**拿到 APK 的步骤**：打开 [Actions 页面](https://github.com/xqNO5/ahu-campus-card/actions)
+→ 点最新一次成功的 **Build APK** → 页面底部 **Artifacts** → 下载
+**ahu-campus-card-debug-apk**（约 0.8 MB，解压后是 `app-debug.apk`）→ 传到手机侧载安装。
+
+本地没有 Android SDK 也能拿到 APK，这是本方案选择 GitHub Actions 的原因。
 
 首次运行 App 需输入学号与密码；勾选「记住账号」时凭据用 **Android Keystore 中的
 AES-256-GCM 密钥**加密后存 SharedPreferences（密钥不出安全硬件，拷走文件无法解密）。
