@@ -1,4 +1,4 @@
-package cn.edu.ahu.cardqr.data
+package cn.edu.ahu.cardqr.store
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
@@ -11,57 +11,36 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Persistence contract for the account credentials.
+ * Small encrypted key/value store backed by the Android keystore.
  *
- * Split from the implementation so [AhuClient] stays free of Android types and the whole
- * login/card pipeline can be exercised on a plain JVM by tools/verify-android.ps1.
+ * Values are sealed with AES-256-GCM under a key that is generated inside the keystore and
+ * never leaves it, so a copied `SharedPreferences` file is useless elsewhere. The portal's
+ * `JSESSIONID` is the only thing that really has to survive restarts -- storing it here is
+ * what allows the app to show a working QR code on launch without asking for a captcha.
  */
-interface CredentialStore {
-    fun save(username: String, password: String)
-    fun load(): SecureStore.Credentials?
-    fun clear()
-    fun lastUsername(): String?
-    fun rememberUsername(username: String)
-}
-
-/**
- * Stores the account credentials encrypted with a key that never leaves the Android
- * keystore.  The ciphertext is AES-256-GCM with a random IV per write, so a copied
- * SharedPreferences file is useless without the device's keystore entry.
- *
- * Only the account and password are persisted; the `synjones-auth` token is deliberately
- * kept in memory because it is short-lived and is cheap to re-mint from the CAS session.
- */
-class SecureStore(context: Context) : CredentialStore {
+class SecureStore(context: Context) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    data class Credentials(val username: String, val password: String)
+    fun read(key: String): String? =
+        prefs.getString(key, null)?.let { decrypt(it) }
 
-    override fun save(username: String, password: String) {
-        prefs.edit()
-            .putString(KEY_USER, encrypt(username))
-            .putString(KEY_PASS, encrypt(password))
-            .apply()
+    fun write(key: String, value: String?) {
+        if (value == null) {
+            remove(key)
+        } else {
+            prefs.edit().putString(key, encrypt(value)).apply()
+        }
     }
 
-    override fun load(): Credentials? {
-        val u = prefs.getString(KEY_USER, null)?.let { decrypt(it) } ?: return null
-        val p = prefs.getString(KEY_PASS, null)?.let { decrypt(it) } ?: return null
-        if (u.isEmpty() || p.isEmpty()) return null
-        return Credentials(u, p)
+    fun remove(key: String) {
+        prefs.edit().remove(key).apply()
     }
 
-    override fun clear() {
-        prefs.edit().remove(KEY_USER).remove(KEY_PASS).apply()
-    }
-
-    override fun lastUsername(): String? =
-        prefs.getString(KEY_LAST_USER, null)?.takeIf { it.isNotEmpty() }
-
-    override fun rememberUsername(username: String) {
-        prefs.edit().putString(KEY_LAST_USER, username).apply()
+    /** Wipe everything this store holds, e.g. on an explicit sign-out. */
+    fun clear() {
+        prefs.edit().clear().apply()
     }
 
     // ------------------------------------------------------------------ crypto
@@ -87,9 +66,9 @@ class SecureStore(context: Context) : CredentialStore {
     private fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-        val iv = cipher.iv
         val body = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(body, Base64.NO_WRAP)
+        return Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" +
+            Base64.encodeToString(body, Base64.NO_WRAP)
     }
 
     private fun decrypt(stored: String): String? = try {
@@ -106,7 +85,8 @@ class SecureStore(context: Context) : CredentialStore {
             String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
         }
     } catch (_: Exception) {
-        // A keystore reset (factory reset, restored backup) makes old data unreadable.
+        // A keystore reset (factory reset, restored backup) makes old values unreadable;
+        // treat that as "nothing stored" rather than crashing.
         null
     }
 
@@ -115,8 +95,5 @@ class SecureStore(context: Context) : CredentialStore {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEY_ALIAS = "ahu_card_credentials"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val KEY_USER = "u"
-        const val KEY_PASS = "p"
-        const val KEY_LAST_USER = "last_u"
     }
 }

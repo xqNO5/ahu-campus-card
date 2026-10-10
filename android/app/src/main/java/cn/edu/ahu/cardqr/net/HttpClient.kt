@@ -2,13 +2,9 @@ package cn.edu.ahu.cardqr.net
 
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.net.CookieHandler
-import java.net.CookieManager
-import java.net.CookiePolicy
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.zip.GZIPInputStream
 
 /** Minimal HTTP response. */
 data class HttpResponse(
@@ -16,26 +12,26 @@ data class HttpResponse(
     val body: String,
     val location: String?,
     val contentType: String?,
-)
+    /** Every `Set-Cookie` header value, in order. */
+    val setCookies: List<String> = emptyList(),
+) {
+    val bodyBytes: ByteArray get() = body.toByteArray(Charsets.UTF_8)
+}
 
 /**
- * Small HTTP client on top of [HttpURLConnection] with cookie handling and redirects kept
- * fully under our control.
+ * Small HTTP client on top of [HttpURLConnection], with cookies and redirects handled
+ * explicitly by the caller.
  *
- * Redirects must be manual: the WebVPN and the berserker SSO both hand back `Location`
- * headers whose URLs have to be re-tunnelled before being followed, so following them
- * blindly inside the HTTP stack would break the chain.
+ * Two deliberate choices:
+ *
+ *  * **No `CookieHandler`.** The portal's session cookie is `HttpOnly`, and a process-wide
+ *    `CookieManager` also swallows the `Set-Cookie` header before callers can read it. Since
+ *    the session has to be persisted and replayed under our control (and survives app
+ *    restarts), cookies are read from the headers and sent back by hand.
+ *  * **No automatic redirects.** The WebVPN and the SSO chain return `Location` headers that
+ *    must be re-tunnelled before being followed.
  */
 class HttpClient {
-
-    init {
-        // Process-wide cookie store; the WebVPN session rides entirely on cookies.
-        if (CookieHandler.getDefault() !is CookieManager) {
-            CookieHandler.setDefault(
-                CookieManager(null, CookiePolicy.ACCEPT_ALL).apply { setCookiePolicy(CookiePolicy.ACCEPT_ALL) }
-            )
-        }
-    }
 
     var userAgent: String = DEFAULT_UA
 
@@ -129,7 +125,6 @@ class HttpClient {
                 setRequestProperty("User-Agent", userAgent)
                 setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                 setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                setRequestProperty("Accept-Encoding", "gzip")
                 for ((k, v) in headers) setRequestProperty(k, v)
                 if (body != null) {
                     doOutput = true
@@ -141,34 +136,68 @@ class HttpClient {
             val status = conn.responseCode
             val location = conn.getHeaderField("Location")
             val contentType = conn.getHeaderField("Content-Type")
+            // A JSESSIONID session is HttpOnly, so HttpURLConnection's own cookie store never
+            // sees it; read every Set-Cookie header directly and let the caller forward them.
+            val cookies = conn.headerFields["Set-Cookie"] ?: emptyList()
             val stream: InputStream? = if (status >= 400) conn.errorStream else conn.inputStream
-            val text = stream?.let { readAll(it, conn.getHeaderField("Content-Encoding")) } ?: ""
+            val bytes = stream?.let { readAll(it) } ?: ByteArray(0)
             conn.disconnect()
 
             if (!followRedirects || status !in 300..399 || location == null || hops >= 10) {
-                return HttpResponse(status, text, location, contentType)
+                return HttpResponse(
+                    status = status,
+                    body = bytes.toString(Charsets.UTF_8),
+                    location = location,
+                    contentType = contentType,
+                    setCookies = cookies,
+                )
             }
             current = java.net.URI(current).resolve(location).toString()
             hops++
         }
     }
 
-    private fun readAll(stream: InputStream, encoding: String?): String {
-        val raw = if (encoding?.contains("gzip", ignoreCase = true) == true) {
-            GZIPInputStream(stream)
-        } else {
-            stream
+    /** Binary GET (e.g. the captcha image) returning bytes plus any cookies. */
+    fun getBytes(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        timeoutMs: Int = 30_000,
+    ): BinaryResponse {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            instanceFollowRedirects = false
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
+            setRequestProperty("User-Agent", userAgent)
+            for ((k, v) in headers) setRequestProperty(k, v)
         }
+        val status = conn.responseCode
+        val cookies = conn.headerFields["Set-Cookie"] ?: emptyList()
+        val stream = if (status >= 400) conn.errorStream else conn.inputStream
+        val bytes = stream?.readBytes() ?: ByteArray(0)
+        conn.disconnect()
+        return BinaryResponse(status, bytes, cookies)
+    }
+
+    /** Binary payload with the headers callers need. */
+    data class BinaryResponse(val status: Int, val bytes: ByteArray, val setCookies: List<String>) {
+        override fun equals(other: Any?): Boolean =
+            other is BinaryResponse && status == other.status && bytes.contentEquals(other.bytes)
+
+        override fun hashCode(): Int = 31 * status + bytes.contentHashCode()
+    }
+
+    private fun readAll(stream: InputStream): ByteArray {
         val buffer = ByteArrayOutputStream()
         val chunk = ByteArray(8192)
-        raw.use {
+        stream.use {
             while (true) {
                 val n = it.read(chunk)
                 if (n <= 0) break
                 buffer.write(chunk, 0, n)
             }
         }
-        return buffer.toString("UTF-8")
+        return buffer.toByteArray()
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")

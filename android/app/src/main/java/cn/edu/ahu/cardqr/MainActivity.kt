@@ -1,6 +1,7 @@
 package cn.edu.ahu.cardqr
 
 import android.app.Activity
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,25 +12,24 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
-import cn.edu.ahu.cardqr.data.AhuClient
-import cn.edu.ahu.cardqr.data.AhuException
-import cn.edu.ahu.cardqr.data.CampusCard
-import cn.edu.ahu.cardqr.data.CredentialStore
-import cn.edu.ahu.cardqr.data.ManualPayload
-import cn.edu.ahu.cardqr.data.PayCode
-import cn.edu.ahu.cardqr.data.SecureStore
+import cn.edu.ahu.cardqr.data.CampusCardException
+import cn.edu.ahu.cardqr.data.CampusCardSession
+import cn.edu.ahu.cardqr.data.CardQr
+import cn.edu.ahu.cardqr.data.SessionExpiredException
 import cn.edu.ahu.cardqr.qr.QrRenderer
+import cn.edu.ahu.cardqr.store.SecureStore
 import java.util.concurrent.Executors
 
 /**
- * Single screen with two states: credential entry, and the campus-card QR code.
+ * Two states: a one-time credential + captcha binding, and the campus-card QR code.
  *
- * All network work runs on a small executor and results are posted back to the main
- * thread; the activity never blocks the UI thread on I/O.
+ * The important behaviour is on launch: if a session was stored previously, the code is
+ * fetched and displayed immediately with no interaction at all. Only when the server rejects
+ * the stored session does the app fall back to asking for credentials and a captcha.
  */
 class MainActivity : Activity() {
 
-    private lateinit var store: CredentialStore
+    private lateinit var store: SecureStore
     private val io = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
 
@@ -37,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var cardView: View
     private lateinit var username: EditText
     private lateinit var password: EditText
+    private lateinit var captchaInput: EditText
+    private lateinit var captchaImage: ImageView
     private lateinit var remember: CheckBox
     private lateinit var loginButton: Button
     private lateinit var loginProgress: ProgressBar
@@ -46,15 +48,10 @@ class MainActivity : Activity() {
     private lateinit var qrExpiry: TextView
     private lateinit var qrProgress: ProgressBar
     private lateinit var cardMeta: TextView
-    private lateinit var manualPayload: EditText
-    private lateinit var manualStatus: TextView
 
-    private var client: AhuClient? = null
-    private var currentCard: CampusCard? = null
+    private val session = CampusCardSession()
     private var autoRefresh: Runnable? = null
-
-    /** When set, this pasted payload is rendered instead of polling the server. */
-    private var manualValue: String? = null
+    private var currentPayload: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +62,8 @@ class MainActivity : Activity() {
         cardView = findViewById(R.id.cardView)
         username = findViewById(R.id.username)
         password = findViewById(R.id.password)
+        captchaInput = findViewById(R.id.captchaInput)
+        captchaImage = findViewById(R.id.captchaImage)
         remember = findViewById(R.id.remember)
         loginButton = findViewById(R.id.loginButton)
         loginProgress = findViewById(R.id.loginProgress)
@@ -74,28 +73,28 @@ class MainActivity : Activity() {
         qrExpiry = findViewById(R.id.qrExpiry)
         qrProgress = findViewById(R.id.qrProgress)
         cardMeta = findViewById(R.id.cardMeta)
-        manualPayload = findViewById(R.id.manualPayload)
-        manualStatus = findViewById(R.id.manualStatus)
 
-        username.setText(store.lastUsername() ?: "")
-        loginButton.setOnClickListener { startLogin() }
-        findViewById<Button>(R.id.refreshButton).setOnClickListener { loadPayCode() }
-        findViewById<Button>(R.id.logoutButton).setOnClickListener { logout() }
-        findViewById<Button>(R.id.manualButton).setOnClickListener { applyManualPayload() }
-        findViewById<Button>(R.id.manualClearButton).setOnClickListener { clearManualPayload() }
+        username.setText(store.read(KEY_LAST_USER) ?: "")
+        remember.isChecked = store.read(KEY_REMEMBER) != "0"
 
-        // A stored credential set lets returning users go straight to their code.
-        store.load()?.let {
-            username.setText(it.username)
-            password.setText(it.password)
-            startLogin()
+        loginButton.setOnClickListener { doLogin() }
+        captchaImage.setOnClickListener { loadCaptcha() }
+        findViewById<Button>(R.id.refreshButton).setOnClickListener { refreshCode() }
+        findViewById<Button>(R.id.logoutButton).setOnClickListener { forgetSession() }
+
+        // Restore the session and go straight to the code; no captcha, no typing.
+        session.restoreCookie(store.read(KEY_SESSION))
+        if (session.isAuthenticated) {
+            showCardView()
+            refreshCode()
+        } else {
+            prepareLogin()
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // The pay code rotates, so refresh whenever the screen comes back to the foreground.
-        if (client != null && currentCard != null) loadPayCode()
+        if (cardView.visibility == View.VISIBLE) startAutoRefresh()
     }
 
     override fun onPause() {
@@ -109,18 +108,149 @@ class MainActivity : Activity() {
         io.shutdownNow()
     }
 
-    // ------------------------------------------------------------- auto refresh
+    // ---------------------------------------------------------------- login flow
 
-    /**
-     * Re-fetch the code periodically so the displayed value stays current while the screen
-     * is visible. [REFRESH_INTERVAL_MS] is deliberately well under the server's shortest
-     * advertised validity so an expired code is never shown.
-     */
+    /** Show the login form and fetch a captcha for the user to read. */
+    private fun prepareLogin() {
+        loginView.visibility = View.VISIBLE
+        cardView.visibility = View.GONE
+        setLoginBusy(false)
+        loadCaptcha()
+    }
+
+    private fun loadCaptcha() {
+        io.execute {
+            try {
+                session.openSession()
+                val bytes = session.fetchCaptcha()
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ui.post { bitmap?.let { captchaImage.setImageBitmap(it) } }
+            } catch (e: Exception) {
+                ui.post { showLoginError(getString(R.string.error_captcha, e.message ?: "")) }
+            }
+        }
+    }
+
+    private fun doLogin() {
+        val user = username.text.toString().trim()
+        val pass = password.text.toString()
+        val captcha = captchaInput.text.toString().trim()
+        if (user.isEmpty() || pass.isEmpty()) {
+            showLoginError(getString(R.string.error_credentials))
+            return
+        }
+        if (captcha.length != 4) {
+            showLoginError(getString(R.string.error_captcha, "请输入 4 位验证码"))
+            return
+        }
+
+        setLoginBusy(true)
+        hideLoginError()
+        io.execute {
+            try {
+                session.login(user, pass, captcha)
+                // Persist so the next launch needs nothing at all.
+                store.write(KEY_SESSION, session.currentCookie())
+                store.write(KEY_LAST_USER, user)
+                store.write(KEY_REMEMBER, if (remember.isChecked) "1" else "0")
+                ui.post {
+                    setLoginBusy(false)
+                    captchaInput.setText("")
+                    showCardView()
+                    refreshCode()
+                }
+            } catch (e: Exception) {
+                ui.post {
+                    setLoginBusy(false)
+                    val msg = when ((e as? CampusCardException)?.kind) {
+                        CampusCardException.Kind.CAPTCHA -> getString(R.string.error_captcha, e.message ?: "")
+                        CampusCardException.Kind.CREDENTIALS -> getString(R.string.error_credentials)
+                        CampusCardException.Kind.NETWORK -> getString(R.string.error_network)
+                        else -> getString(R.string.error_generic, e.message ?: "")
+                    }
+                    showLoginError(msg)
+                    // A wrong captcha invalidates the session: get a new one.
+                    loadCaptcha()
+                }
+            }
+        }
+    }
+
+    private fun forgetSession() {
+        stopAutoRefresh()
+        store.remove(KEY_SESSION)
+        session.restoreCookie(null)
+        currentPayload = null
+        qrImage.setImageDrawable(null)
+        qrNumber.text = ""
+        cardMeta.text = ""
+        qrExpiry.text = ""
+        prepareLogin()
+    }
+
+    // ------------------------------------------------------------------ QR code
+
+    private fun refreshCode() {
+        if (!session.isAuthenticated) {
+            prepareLogin()
+            return
+        }
+        showQrBusy(true)
+        io.execute {
+            try {
+                val qr = session.fetchQrCode()
+                val balance = runCatching { session.fetchBalance() }.getOrNull()
+                val bitmap = QrRenderer.render(qr.payload, 720)
+                ui.post {
+                    showQrBusy(false)
+                    renderCode(qr, bitmap, balance)
+                }
+                startAutoRefresh()
+            } catch (e: SessionExpiredException) {
+                ui.post {
+                    store.remove(KEY_SESSION)
+                    showQrBusy(false)
+                    showLoginError(getString(R.string.error_session_expired))
+                    prepareLogin()
+                }
+            } catch (e: Exception) {
+                ui.post {
+                    showQrBusy(false)
+                    qrNumber.text = getString(R.string.error_generic, e.message ?: "取码失败")
+                }
+                startAutoRefresh()
+            }
+        }
+    }
+
+    private fun renderCode(qr: CardQr, bitmap: android.graphics.Bitmap, balance: Double?) {
+        currentPayload = qr.payload
+        qrImage.setImageBitmap(bitmap)
+        qrImage.visibility = View.VISIBLE
+        qrProgress.visibility = View.GONE
+        // The official page shows the 20-digit part under the code.
+        qrNumber.text = qr.numericCode
+        cardMeta.text = buildString {
+            append(getString(R.string.card_balance)).append(": ")
+            append(if (balance != null) String.format("%.2f 元", balance) else "—")
+            append("   ").append(getString(R.string.card_issued)).append(": ").append(qr.issuedAt)
+        }
+        qrExpiry.text = getString(R.string.card_auto_refresh)
+    }
+
+    private fun showCardView() {
+        loginView.visibility = View.GONE
+        cardView.visibility = View.VISIBLE
+        setLoginBusy(false)
+    }
+
+    // -------------------------------------------------------------- auto refresh
+
     private fun startAutoRefresh() {
         stopAutoRefresh()
         val task = Runnable {
-            if (!isFinishing && client != null) {
-                loadPayCode()
+            if (!isFinishing && session.isAuthenticated) {
+                refreshCode()
                 autoRefresh?.let { ui.postDelayed(it, REFRESH_INTERVAL_MS) }
             }
         }
@@ -133,155 +263,7 @@ class MainActivity : Activity() {
         autoRefresh = null
     }
 
-    // --------------------------------------------------------------------- login
-
-    private fun startLogin() {
-        val user = username.text.toString().trim()
-        val pass = password.text.toString()
-        if (user.isEmpty() || pass.isEmpty()) {
-            showLoginError(getString(R.string.error_credentials))
-            return
-        }
-        setLoginBusy(true)
-        hideLoginError()
-
-        io.execute {
-            try {
-                val c = AhuClient(user, pass)
-                c.login()
-                c.cardToken()
-                client = c
-                if (remember.isChecked) store.save(user, pass) else store.clear()
-                store.rememberUsername(user)
-                ui.post { showCardView() }
-                loadPayCode()
-            } catch (e: Exception) {
-                val kind = (e as? AhuException)?.kind
-                ui.post {
-                    setLoginBusy(false)
-                    showLoginError(
-                        when (kind) {
-                            AhuException.Kind.CREDENTIALS -> getString(R.string.error_credentials)
-                            AhuException.Kind.NETWORK -> getString(R.string.error_network)
-                            else -> getString(R.string.error_generic, e.message ?: e.javaClass.simpleName)
-                        }
-                    )
-                }
-            }
-        }
-    }
-
-    private fun logout() {
-        stopAutoRefresh()
-        store.clear()
-        client = null
-        currentCard = null
-        qrImage.setImageDrawable(null)
-        qrNumber.text = ""
-        qrExpiry.text = ""
-        password.setText("")
-        cardView.visibility = View.GONE
-        loginView.visibility = View.VISIBLE
-        setLoginBusy(false)
-    }
-
-    // ----------------------------------------------------------------- pay code
-
-    private fun loadPayCode() {
-        val c = client ?: return
-
-        // A pasted payload takes precedence and is rendered verbatim.
-        manualValue?.let { renderValue(it, null) ; return }
-
-        showQrBusy(true)
-        io.execute {
-            try {
-                val (card, code) = c.fetchFirstPayCode()
-                currentCard = card
-                val bitmap = QrRenderer.render(code.value, 720)
-                ui.post {
-                    qrImage.setImageBitmap(bitmap)
-                    qrImage.visibility = View.VISIBLE
-                    qrProgress.visibility = View.GONE
-                    qrNumber.text = code.value
-                    cardMeta.text = buildString {
-                        append(getString(R.string.card_account)).append(": ").append(card.account)
-                        append("   ").append(getString(R.string.card_balance)).append(": ")
-                        append(String.format("%.2f", card.balanceFen / 100.0)).append(" 元")
-                    }
-                    qrExpiry.text = getString(R.string.card_expires_in) + ": " + describe(code)
-                }
-                startAutoRefresh()
-            } catch (e: Exception) {
-                ui.post {
-                    showQrBusy(false)
-                    qrNumber.text = getString(R.string.error_generic, e.message ?: "取码失败")
-                }
-                // Keep retrying on the normal cadence rather than giving up.
-                startAutoRefresh()
-            }
-        }
-    }
-
-    private fun describe(code: PayCode): String =
-        if (code.expiresSeconds >= 3600) "${code.expiresSeconds / 3600} 小时"
-        else "${code.expiresSeconds} 秒"
-
-    // ------------------------------------------------------- manual payload
-
-    /**
-     * Render a payload the user pasted from the official page.
-     *
-     * The official 一码通 draws a value this client cannot mint (a 20-digit code plus a
-     * server-issued token), so a pasted copy is the only way to display that exact code.
-     */
-    private fun applyManualPayload() {
-        val raw = manualPayload.text.toString()
-        val check = ManualPayload.inspect(raw)
-        if (!check.valid) {
-            manualStatus.visibility = View.VISIBLE
-            manualStatus.text = getString(R.string.manual_invalid, check.problem ?: "未知原因")
-            return
-        }
-        manualValue = check.value
-        stopAutoRefresh()
-        renderValue(check.value, null)
-        manualStatus.visibility = View.VISIBLE
-        manualStatus.text = getString(R.string.manual_active, check.value.length)
-    }
-
-    private fun clearManualPayload() {
-        manualValue = null
-        manualPayload.setText("")
-        manualStatus.visibility = View.VISIBLE
-        manualStatus.text = getString(R.string.manual_auto)
-        loadPayCode()
-    }
-
-    /**
-     * Draw [value] as a QR code. [code] supplies the expiry footer when the value came from
-     * the API; a pasted payload has no server-provided lifetime.
-     */
-    private fun renderValue(value: String, code: PayCode?) {
-        val bitmap = QrRenderer.render(value, 720)
-        qrImage.setImageBitmap(bitmap)
-        qrImage.visibility = View.VISIBLE
-        qrProgress.visibility = View.GONE
-        qrNumber.text = value
-        if (code != null) {
-            qrExpiry.text = getString(R.string.card_expires_in) + ": " + describe(code)
-        } else {
-            qrExpiry.text = getString(R.string.manual_active, value.length)
-        }
-    }
-
     // --------------------------------------------------------------------- view
-
-    private fun showCardView() {
-        loginView.visibility = View.GONE
-        cardView.visibility = View.VISIBLE
-        setLoginBusy(false)
-    }
 
     private fun setLoginBusy(busy: Boolean) {
         loginButton.isEnabled = !busy
@@ -291,7 +273,7 @@ class MainActivity : Activity() {
 
     private fun showQrBusy(busy: Boolean) {
         qrProgress.visibility = if (busy) View.VISIBLE else View.GONE
-        qrImage.visibility = if (busy) View.INVISIBLE else View.VISIBLE
+        if (busy) qrImage.visibility = View.INVISIBLE
     }
 
     private fun showLoginError(message: String) {
@@ -304,7 +286,10 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        /** Comfortably shorter than the server's advertised code validity. */
-        const val REFRESH_INTERVAL_MS = 30_000L
+        /** The portal's own refresh cadence for the rotating token. */
+        const val REFRESH_INTERVAL_MS = 60_000L
+        const val KEY_SESSION = "adwmh_session"
+        const val KEY_LAST_USER = "last_user"
+        const val KEY_REMEMBER = "remember"
     }
 }

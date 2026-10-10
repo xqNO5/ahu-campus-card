@@ -3,30 +3,25 @@
     <string name="app_name">安大校园卡</string>
 
     <string name="login_title">安大校园卡二维码</string>
-    <string name="login_subtitle">使用统一身份认证登录后即可显示校园卡付款码</string>
+    <string name="login_subtitle">只需登录一次。之后每次打开直接显示可用二维码，无需再输验证码。</string>
     <string name="login_username">学号 / 工号</string>
     <string name="login_password">密码</string>
-    <string name="login_remember">记住账号（使用系统密钥库加密保存）</string>
+    <string name="login_captcha">验证码</string>
+    <string name="login_captcha_hint">看不清？点验证码图片换一张</string>
+    <string name="login_remember">记住账号（验证码仍需每次输入）</string>
     <string name="login_button">登录</string>
     <string name="login_loading">正在登录…</string>
 
     <string name="card_title">校园卡付款码</string>
     <string name="card_balance">余额</string>
-    <string name="card_account">卡号</string>
+    <string name="card_issued">签发时间</string>
     <string name="card_refresh">刷新</string>
     <string name="card_logout">退出登录</string>
-    <string name="card_expires_in">二维码剩余有效时间</string>
-    <string name="card_loading">正在获取二维码…</string>
-    <string name="card_empty">没有查询到校园卡</string>
+    <string name="card_auto_refresh">二维码每分钟自动刷新</string>
 
     <string name="error_network">网络连接失败，请检查网络后重试</string>
     <string name="error_credentials">学号或密码错误</string>
+    <string name="error_captcha">验证码错误：%1$s</string>
+    <string name="error_session_expired">登录状态已失效，请重新登录</string>
     <string name="error_generic">操作失败：%1$s</string>
-
-    <string name="manual_hint">手动粘贴完整二维码内容（可选）</string>
-    <string name="manual_apply">使用此内容</string>
-    <string name="manual_clear">恢复自动取码</string>
-    <string name="manual_active">正在显示手动粘贴的内容（%1$d 位）</string>
-    <string name="manual_invalid">内容无效：%1$s</string>
-    <string name="manual_auto">已恢复自动取码</string>
 </resources>

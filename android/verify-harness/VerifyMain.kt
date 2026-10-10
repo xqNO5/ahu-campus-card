@@ -1,17 +1,23 @@
 package cn.edu.ahu.cardqr.verify
 
-import cn.edu.ahu.cardqr.crypto.CasDes
-import cn.edu.ahu.cardqr.crypto.WebVpnHostCrypt
+import cn.edu.ahu.cardqr.data.CampusCardSession
+import cn.edu.ahu.cardqr.data.CardQr
 import cn.edu.ahu.cardqr.qr.QrEncoder
 import cn.edu.ahu.cardqr.qr.QrRenderer
 import java.io.File
 
 /**
- * Local verification harness. Prints the exact values the Python reference produced, so the
- * Kotlin port can be diffed against the same reference data without an Android device, and
- * additionally re-runs the assertions that back the JUnit test suite.
+ * Offline verification harness for the Android sources.
  *
- * Modes: all | des | hash | qr | assert
+ * `all` runs the checks that back the JUnit suite (QR matrices against frozen fixtures,
+ * payload-shape parsing) so the encoder can be validated without an Android device.
+ *
+ * `direct` exercises the real service the way the app does: a one-time captcha login followed
+ * by login-free code fetches. It only needs a captcha once -- the session cookie is cached
+ * under reports/, which is exactly the app's "open and scan" behaviour.
+ *
+ *   direct                                  fetch a captcha and save it for reading
+ *   direct -Dahu.captcha=XXXX               complete the login and fetch the code
  */
 object VerifyMain {
 
@@ -20,14 +26,10 @@ object VerifyMain {
     @JvmStatic
     fun main(args: Array<String>) {
         when (val mode = if (args.isNotEmpty()) args[0] else "all") {
-            "des" -> des()
-            "hash" -> hash()
-            "qr" -> qr()
+            "qr" -> { qr(); assertions() }
             "assert" -> assertions()
-            "e2e" -> e2e()
-            "all" -> {
-                des(); hash(); qr(); assertions()
-            }
+            "direct" -> direct()
+            "all" -> { qr(); assertions() }
             else -> println("unknown mode: $mode")
         }
         if (failures > 0) {
@@ -45,59 +47,6 @@ object VerifyMain {
     /** Records a result without failing the run. */
     private fun info(label: String, ok: Boolean, detail: String = "") {
         println("CHECK ${if (ok) "OK " else "WARN"} $label${if (detail.isEmpty()) "" else " :: $detail"}")
-    }
-
-    // ------------------------------------------------------------------- DES
-
-    private fun des() {
-        val vectors = listOf(
-            "abc123" to "4860B1E277464DB1C804E426A2405196",
-            "12345678" to "C1BB5938DF9F2190B89172CB54C8C33A",
-            "a" to "A62B4F77D5F8C6C7",
-            "abcd" to "A9CF2704230383D1",
-            "user" to "EB6D16D13160C8DC",
-            "P@ssw0rd!" to "296CA990DAE05D9440D6C5A9B2ABE5BEBD2D248631100F73",
-            "z" to "BE0FA30326A18481",
-            "0123456789abcdef" to
-                "79E8E3AF508DA690F1F11362D4A351BEAB0FA0A611B9EAE82161BB34952010E8",
-            "STUDENT0001P@ssw0rdLT-1082442-nwZfwnrkHP1yM0V9hSDijtI7LO3zYI-cas" to
-                "2A009BDF27B00D5C14DB74A98E47E9A4D494DD1B6CFA1719150E8C7CFC4F9995" +
-                "5FFFE617478AE50D0DE74966926DEB0916BEA721E007042CC1794954AE067DB0" +
-                "5F048E03006EB19EC4C9FFDC305D3FBCC93DC729D836894EDF619B0F2E28553E" +
-                "47293DEDE9FFCCCCF1DB6B271711AF13E218500CE1843CE88AB35967D5AA0BA7",
-        )
-        for ((input, expected) in vectors) {
-            val got = CasDes.strEnc(input, "1", "2", "3")
-            check("des len=${input.length}", got == expected, "got=$got expected=$expected")
-        }
-    }
-
-    // ------------------------------------------------------------------ hash
-
-    private fun hash() {
-        val hosts = listOf(
-            "open.weixin.qq.com",
-            "res.wx.qq.com",
-            "ycard.ahu.edu.cn",
-            "one.ahu.edu.cn",
-            "adwmh.ahu.edu.cn",
-        )
-        for (h in hosts) {
-            val hash = WebVpnHostCrypt.hostHash(h)
-            val back = WebVpnHostCrypt.unhostHash(hash)
-            check("hostHash $h", back == h, "hash=$hash back=$back")
-        }
-        val tunnelled = WebVpnHostCrypt.tunnel(
-            "wvpn.ahu.edu.cn",
-            "https://ycard.ahu.edu.cn/berserker-app/ykt/tsm/queryCard?x=1",
-        )
-        println("TUNNEL $tunnelled")
-        check(
-            "tunnel keeps path+query",
-            tunnelled.endsWith("/berserker-app/ykt/tsm/queryCard?x=1") &&
-                tunnelled.contains(WebVpnHostCrypt.hostHash("ycard.ahu.edu.cn")),
-            tunnelled,
-        )
     }
 
     // -------------------------------------------------------------------- QR
@@ -124,33 +73,12 @@ object VerifyMain {
 
     // -------------------------------------------------------------- assertions
 
-    /** The same assertions the JUnit suite makes, runnable without Gradle. */
+    /** The same checks the JUnit suite makes, runnable without Gradle. */
     private fun assertions() {
-        // DES vectors
-        check("des abc123", CasDes.strEnc("abc123") == "4860B1E277464DB1C804E426A2405196")
-        check("des empty", CasDes.strEnc("") == "")
-
-        // host hash
-        check(
-            "hash open.weixin",
-            WebVpnHostCrypt.hostHash("open.weixin.qq.com") ==
-                "77726476706e69737468656265737421ffe7449269276d59660187e289446d36a8d6",
-        )
-        check(
-            "hash ycard",
-            WebVpnHostCrypt.hostHash("ycard.ahu.edu.cn") ==
-                "77726476706e69737468656265737421e9f4408e237e69586b468ca88d1b203b",
-        )
-        check(
-            "hash one",
-            WebVpnHostCrypt.hostHash("one.ahu.edu.cn") ==
-                "77726476706e69737468656265737421fff944d226387d1e7b0c9ce29b5b",
-        )
-
-        // QR against the frozen reference fixtures
         val fixtures = loadQrFixtures()
         check("qr fixtures loaded", fixtures.isNotEmpty(), "expected the generated QrFixtures.kt")
         check("qr fixtures cover 4 EC levels", fixtures.size == 4, "found ${fixtures.size}")
+
         for ((eccName, version, rows) in fixtures) {
             val ecc = when (eccName) {
                 "LOW" -> QrEncoder.Ecc.LOW
@@ -164,8 +92,7 @@ object VerifyMain {
             if (sizeOk) {
                 for (y in 0 until qr.size) {
                     for (x in 0 until qr.size) {
-                        val expected = rows[y][x] == '#'
-                        if (expected != qr.isDark(x, y)) diff++
+                        if ((rows[y][x] == '#') != qr.isDark(x, y)) diff++
                     }
                 }
             }
@@ -189,29 +116,36 @@ object VerifyMain {
         }
         check("finders", findersOk)
 
-        // size ordering
         check(
             "version grows with payload",
             QrEncoder.encode("1234", QrEncoder.Ecc.LOW).size <
                 QrEncoder.encode("1".repeat(200), QrEncoder.Ecc.LOW).size,
         )
 
-        // oversize rejection
         val rejected = try {
             QrEncoder.encode("x".repeat(4000), QrEncoder.Ecc.HIGH); false
         } catch (_: IllegalArgumentException) {
             true
         }
         check("oversize rejected", rejected)
+
+        // The real service payload is 20 digits plus a 94-character token; the encoder must
+        // handle that shape at the same version the official page uses.
+        val real = "41194784288188343519SPAEMBAGdcymoBAQE1ATEyAwC+x2oAAAAziQO6OPpKoqEDAGYD" +
+            "AAAADGfTGqgtAaf9PCtTuAifP77Ia7aBR5WSSivsCnXC"
+        val realQr = QrEncoder.encode(real, QrEncoder.Ecc.LOW)
+        check("real payload encodes at version 6", (realQr.size - 17) / 4 == 6, "size=${realQr.size}")
+        check("real payload renders", QrRenderer.render(real, 512).width > 0)
+
+        // CardQr parsing of that payload
+        val parsed = CardQr(real, "2026-10-10 23:40:30")
+        check("CardQr splits numeric code", parsed.numericCode.length == 20, parsed.numericCode)
+        check("CardQr reports token length", parsed.tokenLength == real.length - 20, "${parsed.tokenLength}")
     }
 
     /**
      * Minimal reader for the generated QrFixtures.kt, so this harness does not need the
      * generated Kotlin source on its compile classpath.
-     *
-     * Searched under the working directory and every ancestor, trying both the
-     * module-relative and repo-relative forms, because the harness is launched from
-     * android/ by tools/verify-android.ps1 but from the repo root by hand.
      */
     private fun loadQrFixtures(): List<Triple<String, Int, List<String>>> {
         val relative = "app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt"
@@ -223,7 +157,6 @@ object VerifyMain {
             println("NOTE QrFixtures.kt not found; looked in ${candidates.size} locations under ${File("").absolutePath}")
             return emptyList()
         }
-        println("NOTE reading QR fixtures from ${file.absolutePath}")
         val text = file.readText()
         val out = ArrayList<Triple<String, Int, List<String>>>()
         val pattern = Regex(
@@ -239,47 +172,88 @@ object VerifyMain {
         return out
     }
 
-    // ------------------------------------------------------------------- end to end
+    // ---------------------------------------------------------------- direct
 
-    /**
-     * Drives the real client against the live portal. Requires credentials via
-     * `-Dahu.user=... -Dahu.pass=...`; skipped (reported as WARN) when absent.
-     *
-     * Only aggregate facts are printed: no credentials, card number or barcode value.
-     */
-    private fun e2e() {
-        val user = System.getProperty("ahu.user")
-        val pass = System.getProperty("ahu.pass")
-        if (user.isNullOrEmpty() || pass.isNullOrEmpty()) {
-            info("e2e skipped", false, "provide -Dahu.user and -Dahu.pass")
+    private fun direct() {
+        val cookieFile = File("reports/.adwmh_session.json")
+        val captchaFile = File("reports/captcha_live.jpg")
+        val session = CampusCardSession()
+
+        if (cookieFile.isFile) {
+            session.restoreCookie(cookieFile.readText().trim().removeSurrounding("\"", "\""))
+            println("NOTE restored cookie: ${session.currentCookie()?.take(12)}…")
+        }
+
+        val captchaArg = System.getProperty("ahu.captcha", "")?.trim().orEmpty()
+
+        // With a cached session there is nothing to solve: prove the login-free path first.
+        if (captchaArg.isEmpty() && session.isAuthenticated) {
+            try {
+                val qr = session.fetchQrCode()
+                check("relaunch qr without captcha", qr.payload.isNotEmpty(), "len=${qr.payload.length}")
+                check(
+                    "relaunch payload shape",
+                    qr.numericCode.length == 20 && qr.tokenLength > 0,
+                    "digits=${qr.numericCode.length} token=${qr.tokenLength}",
+                )
+                println("QRPAYLOAD len=${qr.payload.length} digits=${qr.numericCode.length} token=${qr.tokenLength}")
+                check("relaunch render", QrRenderer.render(qr.payload, 720).width > 0)
+                check("relaunch balance", session.fetchBalance() != null)
+                println("NOTE 重启后无需任何交互即可取码，即 App 的打开即用路径")
+                return
+            } catch (e: Exception) {
+                check("relaunch without captcha", false, "${e.javaClass.simpleName}: ${e.message}")
+                return
+            }
+        }
+
+        if (captchaArg.isEmpty()) {
+            try {
+                session.openSession()
+                captchaFile.parentFile?.mkdirs()
+                val bytes = session.fetchCaptcha()
+                captchaFile.writeBytes(bytes)
+                cookieFile.parentFile?.mkdirs()
+                cookieFile.writeText(session.currentCookie() ?: "")
+                println("NOTE captcha saved to ${captchaFile.absolutePath} (${bytes.size} bytes)")
+                println("NOTE now run: direct -Dahu.captcha=<the 4 characters>")
+            } catch (e: Exception) {
+                check("direct captcha fetch", false, "${e.javaClass.simpleName}: ${e.message}")
+            }
             return
         }
 
         try {
-            val client = cn.edu.ahu.cardqr.data.AhuClient(user, pass)
-            client.login()
-            info("e2e webvpn login", true)
-
-            val token = client.cardToken()
-            info("e2e card sso token", token.isNotEmpty(), "length=${token.length}")
-
-            val cards = client.queryCards()
-            check("e2e queryCard", cards.isNotEmpty(), "cards=${cards.size}")
-            val card = cards.firstOrNull()
-            if (card != null) {
-                println("E2E card accountLength=${card.account.length} balanceFen=${card.balanceFen}")
-                val code = client.fetchPayCode(card.account)
-                check(
-                    "e2e barcode",
-                    code.value.isNotEmpty() && code.expiresSeconds > 0,
-                    "digits=${code.value.length} expires=${code.expiresSeconds}",
+            var usedLogin = false
+            if (!session.isAuthenticated || !session.hasValidSession()) {
+                session.login(
+                    System.getProperty("ahu.user", ""),
+                    System.getProperty("ahu.pass", ""),
+                    captchaArg,
                 )
-                // prove the fetched value is renderable
-                val bmp = QrRenderer.render(code.value, 512)
-                check("e2e render", bmp.width == bmp.height && bmp.width > 0, "dim=${bmp.width}")
+                usedLogin = true
             }
+            println("NOTE login performed this run: $usedLogin")
+
+            val qr = session.fetchQrCode()
+            check("direct qr payload", qr.payload.isNotEmpty(), "len=${qr.payload.length}")
+            check(
+                "direct payload shape (digits + token)",
+                qr.numericCode.length == 20 && qr.tokenLength > 0,
+                "digits=${qr.numericCode.length} token=${qr.tokenLength}",
+            )
+            println("QRPAYLOAD len=${qr.payload.length} digits=${qr.numericCode.length} token=${qr.tokenLength}")
+
+            check("direct render", QrRenderer.render(qr.payload, 720).width > 0)
+            check("direct balance", session.fetchBalance() != null)
+
+            session.currentCookie()?.let { cookieFile.writeText(it) }
+            println("NOTE cookie cached at ${cookieFile.absolutePath}")
+
+            val again = session.fetchQrCode()
+            check("direct second fetch without re-login", again.payload.isNotEmpty(), "len=${again.payload.length}")
         } catch (e: Exception) {
-            check("e2e run", false, "${e.javaClass.simpleName}: ${e.message}")
+            check("direct run", false, "${e.javaClass.simpleName}: ${e.message}")
         }
     }
 }

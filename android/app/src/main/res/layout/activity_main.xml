@@ -4,7 +4,7 @@
     android:layout_height="match_parent"
     android:background="@color/bg">
 
-    <!-- ============================ 登录视图 ============================ -->
+    <!-- ============================ 登录视图（仅首次） ============================ -->
     <ScrollView
         android:id="@+id/loginView"
         android:layout_width="match_parent"
@@ -17,7 +17,7 @@
             android:orientation="vertical"
             android:paddingStart="28dp"
             android:paddingEnd="28dp"
-            android:paddingTop="72dp"
+            android:paddingTop="64dp"
             android:paddingBottom="32dp">
 
             <TextView
@@ -39,7 +39,7 @@
             <EditText
                 android:id="@+id/username"
                 style="@style/InputBox"
-                android:layout_marginTop="28dp"
+                android:layout_marginTop="26dp"
                 android:autofillHints="username"
                 android:hint="@string/login_username"
                 android:inputType="text" />
@@ -51,6 +51,40 @@
                 android:autofillHints="password"
                 android:hint="@string/login_password"
                 android:inputType="textPassword" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/captchaInput"
+                    style="@style/InputBox"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:hint="@string/login_captcha"
+                    android:inputType="text"
+                    android:maxLength="4" />
+
+                <ImageView
+                    android:id="@+id/captchaImage"
+                    android:layout_width="110dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="10dp"
+                    android:background="@drawable/bg_input"
+                    android:contentDescription="@string/login_captcha"
+                    android:scaleType="fitCenter" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/login_captcha_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
 
             <CheckBox
                 android:id="@+id/remember"
@@ -65,7 +99,7 @@
             <Button
                 android:id="@+id/loginButton"
                 style="@style/PrimaryButton"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="16dp"
                 android:text="@string/login_button" />
 
             <ProgressBar
@@ -139,16 +173,16 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
+            android:layout_marginTop="16dp"
             android:background="@drawable/bg_card"
             android:gravity="center"
-            android:layout_marginTop="16dp"
             android:orientation="vertical"
             android:padding="16dp">
 
             <ImageView
                 android:id="@+id/qrImage"
-                android:layout_width="260dp"
-                android:layout_height="260dp"
+                android:layout_width="280dp"
+                android:layout_height="280dp"
                 android:contentDescription="@string/card_title"
                 android:scaleType="fitCenter" />
 
@@ -179,58 +213,11 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <!--
-          The official page renders a code that is a 20-digit value plus a server-issued
-          token. This client can only mint the 20-digit half, so a full payload copied from
-          the official page can be pasted here and is rendered verbatim.
-        -->
-        <EditText
-            android:id="@+id/manualPayload"
-            style="@style/InputBox"
-            android:layout_marginTop="12dp"
-            android:hint="@string/manual_hint"
-            android:inputType="textNoSuggestions"
-            android:textSize="13sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/manualButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:background="@android:color/transparent"
-                android:text="@string/manual_apply"
-                android:textAllCaps="false"
-                android:textColor="@color/brand" />
-
-            <Button
-                android:id="@+id/manualClearButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:background="@android:color/transparent"
-                android:text="@string/manual_clear"
-                android:textAllCaps="false"
-                android:textColor="@color/text_secondary" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/manualStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
         <Button
             android:id="@+id/logoutButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:background="@android:color/transparent"
             android:text="@string/card_logout"
             android:textAllCaps="false"

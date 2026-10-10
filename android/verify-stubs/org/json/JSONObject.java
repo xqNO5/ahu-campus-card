@@ -61,6 +61,16 @@ public class JSONObject {
         }
     }
 
+    public double optDouble(String key, double fallback) {
+        Object v = map.get(key);
+        if (v instanceof Number) return ((Number) v).doubleValue();
+        try {
+            return v == null ? fallback : Double.parseDouble(String.valueOf(v));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
     public JSONObject optJSONObject(String key) {
         Object v = map.get(key);
         return v instanceof JSONObject ? (JSONObject) v : null;
