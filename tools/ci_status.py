@@ -1,23 +1,18 @@
-"""Check the GitHub Actions status of the pushed repository."""
+"""Report the status of the repository's GitHub Actions runs."""
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 import requests
 
-token = Path(os.environ["TEMP"], "gh_token.txt").read_text().strip()
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept": "application/vnd.github+json",
-}
-
-REPO = "xqNO5/ahu-campus-card"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gh_api import REPO, headers  # noqa: E402
 
 
 def main() -> int:
-    r = requests.get(f"https://api.github.com/repos/{REPO}/actions/runs", headers=headers, timeout=30)
+    h = headers()
+    r = requests.get(f"https://api.github.com/repos/{REPO}/actions/runs", headers=h, timeout=30)
     print("runs API:", r.status_code)
     if r.status_code != 200:
         print(r.text[:300])
@@ -26,22 +21,18 @@ def main() -> int:
     data = r.json()
     runs = data.get("workflow_runs", [])
     print("total_count:", data.get("total_count"))
-    if not runs:
-        print("(还没有任何运行记录)")
-        return 0
-
-    for run in runs[:5]:
-        print(f"#{run['run_number']} {run['name']}")
-        print(f"   status={run['status']} conclusion={run['conclusion']} event={run['event']}")
+    for run in runs[:3]:
+        print(f"#{run['run_number']} {run['name']} [{run['head_sha'][:7]}]")
+        print(f"   status={run['status']} conclusion={run['conclusion']}")
         print(f"   {run['html_url']}")
-        jobs_url = run["jobs_url"]
-        jr = requests.get(jobs_url, headers=headers, timeout=30)
+        jr = requests.get(run["jobs_url"], headers=h, timeout=30)
         if jr.status_code == 200:
             for job in jr.json().get("jobs", []):
-                print(f"   job: {job['name']} status={job['status']} conclusion={job['conclusion']}")
+                print(f"   job {job['name']}: {job['status']}/{job['conclusion']}")
                 for step in job.get("steps", []):
-                    mark = step.get("conclusion") or step.get("status")
-                    print(f"      - {step['name']}: {mark}")
+                    state = step.get("conclusion") or step.get("status")
+                    flag = "  " if state == "success" else "!!"
+                    print(f"      {flag} {step['name']}: {state}")
     return 0
 
 
