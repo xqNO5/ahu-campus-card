@@ -27,6 +27,44 @@ data class PayCode(
 )
 
 /**
+ * Accepts a payload the user pasted from the official page.
+ *
+ * The official 一码通 renderer draws the *whole* value returned by its code endpoint: a
+ * 20-digit code followed by a server-issued token (observed 20 + 94 characters, which is
+ * QR version 6 at EC level L). This client can only mint the 20-digit half, so a pasted
+ * full payload is passed through unchanged and validated for shape.
+ */
+object ManualPayload {
+
+    /** Result of inspecting a pasted value. */
+    data class Inspection(
+        val value: String,
+        val digitsPrefix: Int,
+        val tokenLength: Int,
+        val valid: Boolean,
+        val problem: String? = null,
+    )
+
+    private val ALLOWED = Regex("^[0-9A-Za-z+/=_\\-]+$")
+
+    fun inspect(raw: String): Inspection {
+        val value = raw.trim().replace("\\s".toRegex(), "")
+        val digits = value.takeWhile { it.isDigit() }.length
+        val token = value.length - digits
+        if (value.isEmpty()) {
+            return Inspection(value, 0, 0, false, "内容为空")
+        }
+        if (!ALLOWED.matches(value)) {
+            return Inspection(value, digits, token, false, "包含非法字符（应为数字 + base64 字符）")
+        }
+        if (digits < 10) {
+            return Inspection(value, digits, token, false, "前缀数字不足 10 位，可能不是校园卡取码内容")
+        }
+        return Inspection(value, digits, token, true)
+    }
+}
+
+/**
  * Whole client for the AHU campus card.
  *
  * The chain, verified end to end against the live service:
@@ -207,12 +245,22 @@ class AhuClient(
     /**
      * Fetch the rotating payment code. [payAccount] is the card's account number, which the
      * portal itself passes as both `account` and `payacc` with `paytype=1`.
+     *
+     * Note on payload shape: the official 一码通 page renders a *longer* value than the one
+     * this endpoint returns -- a 20-digit code followed by a server-issued base64 token
+     * (observed: 20 digits + 96 chars, QR version 6 / EC level L). That token comes from a
+     * different, captcha-gated endpoint and cannot be minted here, so this client renders
+     * whatever the code endpoint returns and additionally accepts a pasted full payload
+     * (see [cn.edu.ahu.cardqr.data.ManualPayload]).
      */
-    fun fetchPayCode(payAccount: String): PayCode {
-        val json = cardApiGet(
-            "/berserker-app/ykt/tsm/batchGetBarCodeGet",
-            mapOf("account" to payAccount, "payacc" to payAccount, "paytype" to "1"),
+    fun fetchPayCode(payAccount: String, codeType: String? = null): PayCode {
+        val params = mutableMapOf(
+            "account" to payAccount,
+            "payacc" to payAccount,
+            "paytype" to "1",
         )
+        if (!codeType.isNullOrEmpty()) params["codeType"] = codeType
+        val json = cardApiGet("/berserker-app/ykt/tsm/batchGetBarCodeGet", params)
         val data = json.optJSONObject("data")
             ?: throw AhuException("取码失败：响应缺少 data")
         val errmsg = data.optString("errmsg")

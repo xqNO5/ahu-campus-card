@@ -179,11 +179,58 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
+        <!--
+          The official page renders a code that is a 20-digit value plus a server-issued
+          token. This client can only mint the 20-digit half, so a full payload copied from
+          the official page can be pasted here and is rendered verbatim.
+        -->
+        <EditText
+            android:id="@+id/manualPayload"
+            style="@style/InputBox"
+            android:layout_marginTop="12dp"
+            android:hint="@string/manual_hint"
+            android:inputType="textNoSuggestions"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/manualButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:text="@string/manual_apply"
+                android:textAllCaps="false"
+                android:textColor="@color/brand" />
+
+            <Button
+                android:id="@+id/manualClearButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:text="@string/manual_clear"
+                android:textAllCaps="false"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/manualStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/logoutButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="4dp"
             android:background="@android:color/transparent"
             android:text="@string/card_logout"
             android:textAllCaps="false"

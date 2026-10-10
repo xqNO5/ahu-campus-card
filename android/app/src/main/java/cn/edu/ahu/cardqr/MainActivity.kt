@@ -15,6 +15,7 @@ import cn.edu.ahu.cardqr.data.AhuClient
 import cn.edu.ahu.cardqr.data.AhuException
 import cn.edu.ahu.cardqr.data.CampusCard
 import cn.edu.ahu.cardqr.data.CredentialStore
+import cn.edu.ahu.cardqr.data.ManualPayload
 import cn.edu.ahu.cardqr.data.PayCode
 import cn.edu.ahu.cardqr.data.SecureStore
 import cn.edu.ahu.cardqr.qr.QrRenderer
@@ -45,10 +46,15 @@ class MainActivity : Activity() {
     private lateinit var qrExpiry: TextView
     private lateinit var qrProgress: ProgressBar
     private lateinit var cardMeta: TextView
+    private lateinit var manualPayload: EditText
+    private lateinit var manualStatus: TextView
 
     private var client: AhuClient? = null
     private var currentCard: CampusCard? = null
     private var autoRefresh: Runnable? = null
+
+    /** When set, this pasted payload is rendered instead of polling the server. */
+    private var manualValue: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,11 +74,15 @@ class MainActivity : Activity() {
         qrExpiry = findViewById(R.id.qrExpiry)
         qrProgress = findViewById(R.id.qrProgress)
         cardMeta = findViewById(R.id.cardMeta)
+        manualPayload = findViewById(R.id.manualPayload)
+        manualStatus = findViewById(R.id.manualStatus)
 
         username.setText(store.lastUsername() ?: "")
         loginButton.setOnClickListener { startLogin() }
         findViewById<Button>(R.id.refreshButton).setOnClickListener { loadPayCode() }
         findViewById<Button>(R.id.logoutButton).setOnClickListener { logout() }
+        findViewById<Button>(R.id.manualButton).setOnClickListener { applyManualPayload() }
+        findViewById<Button>(R.id.manualClearButton).setOnClickListener { clearManualPayload() }
 
         // A stored credential set lets returning users go straight to their code.
         store.load()?.let {
@@ -179,16 +189,20 @@ class MainActivity : Activity() {
 
     private fun loadPayCode() {
         val c = client ?: return
+
+        // A pasted payload takes precedence and is rendered verbatim.
+        manualValue?.let { renderValue(it, null) ; return }
+
         showQrBusy(true)
         io.execute {
             try {
-                val result = c.fetchFirstPayCode()
-                val (card, code) = result
+                val (card, code) = c.fetchFirstPayCode()
                 currentCard = card
                 val bitmap = QrRenderer.render(code.value, 720)
                 ui.post {
-                    showQrBusy(false)
                     qrImage.setImageBitmap(bitmap)
+                    qrImage.visibility = View.VISIBLE
+                    qrProgress.visibility = View.GONE
                     qrNumber.text = code.value
                     cardMeta.text = buildString {
                         append(getString(R.string.card_account)).append(": ").append(card.account)
@@ -212,6 +226,54 @@ class MainActivity : Activity() {
     private fun describe(code: PayCode): String =
         if (code.expiresSeconds >= 3600) "${code.expiresSeconds / 3600} 小时"
         else "${code.expiresSeconds} 秒"
+
+    // ------------------------------------------------------- manual payload
+
+    /**
+     * Render a payload the user pasted from the official page.
+     *
+     * The official 一码通 draws a value this client cannot mint (a 20-digit code plus a
+     * server-issued token), so a pasted copy is the only way to display that exact code.
+     */
+    private fun applyManualPayload() {
+        val raw = manualPayload.text.toString()
+        val check = ManualPayload.inspect(raw)
+        if (!check.valid) {
+            manualStatus.visibility = View.VISIBLE
+            manualStatus.text = getString(R.string.manual_invalid, check.problem ?: "未知原因")
+            return
+        }
+        manualValue = check.value
+        stopAutoRefresh()
+        renderValue(check.value, null)
+        manualStatus.visibility = View.VISIBLE
+        manualStatus.text = getString(R.string.manual_active, check.value.length)
+    }
+
+    private fun clearManualPayload() {
+        manualValue = null
+        manualPayload.setText("")
+        manualStatus.visibility = View.VISIBLE
+        manualStatus.text = getString(R.string.manual_auto)
+        loadPayCode()
+    }
+
+    /**
+     * Draw [value] as a QR code. [code] supplies the expiry footer when the value came from
+     * the API; a pasted payload has no server-provided lifetime.
+     */
+    private fun renderValue(value: String, code: PayCode?) {
+        val bitmap = QrRenderer.render(value, 720)
+        qrImage.setImageBitmap(bitmap)
+        qrImage.visibility = View.VISIBLE
+        qrProgress.visibility = View.GONE
+        qrNumber.text = value
+        if (code != null) {
+            qrExpiry.text = getString(R.string.card_expires_in) + ": " + describe(code)
+        } else {
+            qrExpiry.text = getString(R.string.manual_active, value.length)
+        }
+    }
 
     // --------------------------------------------------------------------- view
 
