@@ -1,0 +1,31 @@
+Fix build failure: Bitmap.createBitmap requires a non-null Config
+
+CI caught a real bug that the local harness had been unable to see:
+`Bitmap.createBitmap(w, h, null)` does not compile against the Android SDK,
+because the third parameter is annotated @NonNull.
+
+The offline stub had been written more permissively than the platform (a
+top-level `Config` class and a nullable parameter), so it accepted code the
+Android build rejects.  The stubs now mirror the SDK:
+
+* `Bitmap.Config` is a nested type again, and the parameter is non-nullable,
+  so the harness cannot accept an invalid call any more;
+* the stubs are compiled by javac for the runtime *and* handed to kotlinc as
+  sources, because kotlinc cannot resolve a nested type out of class files
+  while javac cannot compile Kotlin.
+
+Two further harness defects surfaced while fixing this, both of which had let
+a broken run look green:
+
+* the QR fixture file was looked up only relative to the working directory, so
+  running the harness from android/ silently skipped the whole matrix
+  comparison (the check count dropped 27 -> 15 without failing);
+* tools/verify-android.ps1 only inspected DES/HASH lines, so a harness that
+  failed elsewhere still reported success.  It now checks the harness exit
+  code, any `CHECK FAIL`, and the presence of `SUMMARY OK`.
+
+The fixture lookup searches every ancestor directory in both module-relative
+and repo-relative form, and a missing fixture is now a hard failure.
+
+Verified: 29/29 checks pass, plus a live end-to-end run of
+login -> SSO -> queryCard -> barcode -> render.

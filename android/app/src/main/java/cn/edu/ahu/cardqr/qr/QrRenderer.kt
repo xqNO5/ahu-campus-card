@@ -33,9 +33,9 @@ object QrRenderer {
             }
         }
 
-        // A null config makes the platform default to ARGB_8888, which keeps this call free
-        // of a Bitmap.Config reference and therefore easy to stub off-device.
-        val bitmap = Bitmap.createBitmap(dim, dim, null)
+        // The config parameter is @NonNull in the platform API, so pass ARGB_8888 explicitly
+        // rather than null.
+        val bitmap = Bitmap.createBitmap(dim, dim, Bitmap.Config.ARGB_8888)
         bitmap.setPixels(pixels, 0, dim, 0, 0, dim, dim)
         return bitmap
     }

@@ -149,9 +149,8 @@ object VerifyMain {
 
         // QR against the frozen reference fixtures
         val fixtures = loadQrFixtures()
-        if (fixtures.isEmpty()) {
-            println("NOTE no qr fixtures file found; skipping matrix comparison")
-        }
+        check("qr fixtures loaded", fixtures.isNotEmpty(), "expected the generated QrFixtures.kt")
+        check("qr fixtures cover 4 EC levels", fixtures.size == 4, "found ${fixtures.size}")
         for ((eccName, version, rows) in fixtures) {
             val ecc = when (eccName) {
                 "LOW" -> QrEncoder.Ecc.LOW
@@ -209,13 +208,22 @@ object VerifyMain {
     /**
      * Minimal reader for the generated QrFixtures.kt, so this harness does not need the
      * generated Kotlin source on its compile classpath.
+     *
+     * Searched under the working directory and every ancestor, trying both the
+     * module-relative and repo-relative forms, because the harness is launched from
+     * android/ by tools/verify-android.ps1 but from the repo root by hand.
      */
     private fun loadQrFixtures(): List<Triple<String, Int, List<String>>> {
-        val candidates = listOf(
-            "app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt",
-            "android/app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt",
-        )
-        val file = candidates.map { File(it) }.firstOrNull { it.exists() } ?: return emptyList()
+        val relative = "app/src/test/java/cn/edu/ahu/cardqr/qr/QrFixtures.kt"
+        val roots = generateSequence(File("").absoluteFile) { it.parentFile }.toList()
+        val candidates = roots.map { File(it, relative) } +
+            roots.map { File(File(it, "android"), relative) }
+        val file = candidates.firstOrNull { it.isFile }
+        if (file == null) {
+            println("NOTE QrFixtures.kt not found; looked in ${candidates.size} locations under ${File("").absolutePath}")
+            return emptyList()
+        }
+        println("NOTE reading QR fixtures from ${file.absolutePath}")
         val text = file.readText()
         val out = ArrayList<Triple<String, Int, List<String>>>()
         val pattern = Regex(

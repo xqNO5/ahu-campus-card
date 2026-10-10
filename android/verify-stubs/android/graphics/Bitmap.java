@@ -1,12 +1,22 @@
 package android.graphics;
 
 /**
- * Stand-in for Android's Bitmap, enough to exercise QrRenderer on a plain JVM.
+ * Stand-in for Android's Bitmap.
  *
- * The config parameter is typed as Object so the stub does not need to model
- * `Bitmap.Config` (Android treats a null config as ARGB_8888).
+ * Two details are deliberately mirrored from the real SDK so the offline harness cannot
+ * accept code the Android build would reject:
+ *   * `Config` is a nested type, not a top-level class;
+ *   * the config parameter is non-nullable.
  */
 public class Bitmap {
+
+    /** Mirrors android.graphics.Bitmap.Config. */
+    public static final class Config {
+        public static final Config ARGB_8888 = new Config();
+
+        private Config() {
+        }
+    }
 
     public final int width;
     public final int height;
@@ -18,7 +28,10 @@ public class Bitmap {
         this.pixels = new int[width * height];
     }
 
-    public static Bitmap createBitmap(int width, int height, Object config) {
+    public static Bitmap createBitmap(int width, int height, Config config) {
+        if (config == null) {
+            throw new NullPointerException("config");
+        }
         return new Bitmap(width, height);
     }
 
