@@ -5,6 +5,10 @@
         <item name="android:colorPrimaryDark">@color/brand_dark</item>
         <item name="android:colorAccent">@color/brand</item>
         <item name="android:windowBackground">@color/bg</item>
+        <!-- 状态栏跟着主页面走：默认颜色来自 colorPrimaryDark（深蓝），这里改成与页面同色，
+             并把图标/文字转成深色，否则浅底上是白图标、看不见。 -->
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 
     <style name="InputBox">
